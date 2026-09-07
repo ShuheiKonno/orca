@@ -40,3 +40,11 @@
 # Vitest writes snapshots with LF, so a CRLF checkout makes every local test run
 # report them as modified with an empty content diff.
 **/__snapshots__/*.snap text eol=lf
+# Source read back as bytes: 29 test files load repo source through `readFileSync`
+# and assert on `\n`-joined text, so a CRLF checkout fails them. Pinning the source
+# tree keeps that class of test honest on every platform. `.mjs` stays out: the
+# `config/scripts` pin is already scoped, and `shebang-script-line-ending-pin`
+# guards that scoping. Windows script files (.cmd/.ps1/.nsh) are deliberately
+# left to the platform default.
+*.ts text eol=lf
+*.tsx text eol=lf
