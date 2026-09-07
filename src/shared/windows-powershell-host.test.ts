@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { writeFileSync } from 'node:fs'
 import type * as NodeFs from 'node:fs'
 
 const statSyncMock = vi.hoisted(() => vi.fn())
@@ -54,6 +55,20 @@ function throwFsError(code: string): never {
   throw Object.assign(new Error(code), { code })
 }
 
+/**
+ * Does what a working host does: decode the probe payload and write the marker
+ * it names. Reading the path out of the payload rather than restating it keeps
+ * the fixture honest if the script shape changes.
+ */
+function answerProbe(spec: { args: string[] }): void {
+  const script = Buffer.from(spec.args[4], 'base64').toString('utf16le')
+  const quoted = /WriteAllText\('(.*?)',/.exec(script)?.[1]
+  if (!quoted) {
+    throw new Error(`probe payload names no marker path: ${script}`)
+  }
+  writeFileSync(quoted.replaceAll("''", "'"), 'orca-powershell-host-ok')
+}
+
 beforeEach(() => {
   resetWindowsPowerShellHostCacheForTests()
   statSyncMock.mockReset()
@@ -93,8 +108,8 @@ describe('isPossibleWindowsPowerShellHost', () => {
 })
 
 describe('getWindowsPowerShellHost', () => {
-  // Why it must not probe: this is the path the ACL hardening and the console
-  // builder take, and both run on the main process.
+  // Why it must not probe: this is the path the console builder takes, and it
+  // runs on the main process.
   it('answers with Windows PowerShell until a warm-up resolves something better', async () => {
     expect(getWindowsPowerShellHost(ENV)).toBe(SYSTEM32_POWERSHELL)
     await warmWindowsPowerShellHostCache(
@@ -254,6 +269,37 @@ describe('probeWindowsPowerShellHostAsync', () => {
     await expect(probeWindowsPowerShellHostAsync(PROGRAM_FILES_PWSH)).resolves.toMatchObject({
       ok: false,
       markerOk: false
+    })
+  })
+
+  // Why the positive control: without it the timeout case below could pass on a
+  // helper that never writes the marker, asserting nothing about `timedOut`.
+  it('accepts a host that writes the marker and reports the exit code in time', async () => {
+    runProcessMock.mockImplementation(async (spec: { args: string[] }) => {
+      answerProbe(spec)
+      return { code: 7, timedOut: false }
+    })
+
+    await expect(probeWindowsPowerShellHostAsync(PROGRAM_FILES_PWSH)).resolves.toMatchObject({
+      ok: true,
+      markerOk: true
+    })
+  })
+
+  // The fleet laptop's 5.1 answered 13/15 trivial probes. `runProcess` kills on
+  // timeout but still settles from close, so a late answer arrives with a real
+  // exit code — caching it would reinstate the intermittent host.
+  it('rejects a host that answered only after the probe budget expired', async () => {
+    runProcessMock.mockImplementation(async (spec: { args: string[] }) => {
+      answerProbe(spec)
+      return { code: 7, timedOut: true }
+    })
+
+    await expect(probeWindowsPowerShellHostAsync(PROGRAM_FILES_PWSH)).resolves.toMatchObject({
+      ok: false,
+      timedOut: true,
+      exitCode: 7,
+      markerOk: true
     })
   })
 })

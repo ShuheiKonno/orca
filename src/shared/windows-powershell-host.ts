@@ -163,7 +163,11 @@ export async function probeWindowsPowerShellHostAsync(
     const result = await runProcess(buildProbeSpec(executablePath, markerPath))
     const markerOk = readProbeMarker(markerPath)
     return {
-      ok: result.code === PROBE_EXIT_CODE && markerOk,
+      // Why timedOut disqualifies: the timer kills the child but still resolves
+      // from close, so a host that answered just past the budget arrives with a
+      // real exit code. Caching it is the intermittent host this module exists
+      // to reject — every later call would then pay that same wait.
+      ok: !result.timedOut && result.code === PROBE_EXIT_CODE && markerOk,
       timedOut: result.timedOut,
       exitCode: result.code,
       markerOk
@@ -171,7 +175,14 @@ export async function probeWindowsPowerShellHostAsync(
   } catch {
     return { ok: false }
   } finally {
-    rmSync(markerPath, { force: true })
+    // Why swallow: `force` only ignores a missing path, and this runs in
+    // `finally` — a locked or undeletable marker would otherwise throw away a
+    // probe result that is already decided.
+    try {
+      rmSync(markerPath, { force: true })
+    } catch {
+      // Cleanup is best effort; a stale marker in tmpdir costs nothing.
+    }
   }
 }
 
