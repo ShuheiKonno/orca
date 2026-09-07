@@ -138,6 +138,40 @@ describe('warmWindowsPowerShellHostCache', () => {
     expect(probe).not.toHaveBeenCalledWith(SYSTEM32_POWERSHELL)
   })
 
+  // The probe spawns the host directly, so a `&` in the path passes it — but the
+  // sign-in goes through `wrapWindowsStartWait`, whose cmd.exe guard refuses that
+  // same path. Caching it would break every login on a machine whose System32
+  // host worked, so the candidate must lose before it is ever probed.
+  it('skips a candidate the start /wait wrapper could not launch', async () => {
+    const unsafeEnv = { ...ENV, ProgramFiles: 'C:\\Tools & Utils', PATH: '' }
+    const unsafePwsh = 'C:\\Tools & Utils\\PowerShell\\7\\pwsh.exe'
+    const probe = vi.fn(found)
+
+    expect(await warmWindowsPowerShellHostCache(probe, unsafeEnv)).toBe(WINDOWS_APPS_PWSH)
+    expect(probe).not.toHaveBeenCalledWith(unsafePwsh)
+  })
+
+  it('reports an unlaunchable candidate as its own outcome, not as a probe failure', async () => {
+    const unsafeEnv = {
+      ...ENV,
+      ProgramFiles: 'C:\\Tools & Utils',
+      LOCALAPPDATA: 'C:\\Users\\a%b\\AppData\\Local',
+      PATH: ''
+    }
+    const resolutions: WindowsPowerShellHostResolution[] = []
+    setWindowsPowerShellHostResolutionObserver((resolution) => resolutions.push(resolution))
+
+    // Why System32 must miss: otherwise it passes on its own merits and the
+    // fallback this asserts is never taken.
+    expect(await warmWindowsPowerShellHostCache(missed, unsafeEnv)).toBe(SYSTEM32_POWERSHELL)
+    expect(resolutions[0]?.fellBack).toBe(true)
+    expect(resolutions[0]?.attempts.map((attempt) => attempt.unwrappable ?? false)).toEqual([
+      true,
+      true,
+      false
+    ])
+  })
+
   it('deduplicates quoted Windows PATH entries regardless of case or test host platform', () => {
     const candidates = getWindowsPowerShellHostCandidates({
       ...ENV,

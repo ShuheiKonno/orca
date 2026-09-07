@@ -15,7 +15,7 @@ function summarizeAttempts(resolution: WindowsPowerShellHostResolution): Record<
       .slice(0, MAX_REPORTED_ATTEMPTS)
       .map((attempt, index) => [
         `attempt${index}`,
-        `#${resolution.candidates.indexOf(attempt.path)} ${win32.basename(attempt.path)} absent=${attempt.absent ?? false} ok=${attempt.ok} exit=${attempt.exitCode ?? 'none'} marker=${attempt.markerOk ?? false} timedOut=${attempt.timedOut ?? false} ms=${attempt.durationMs}`
+        `#${resolution.candidates.indexOf(attempt.path)} ${win32.basename(attempt.path)} absent=${attempt.absent ?? false} unwrappable=${attempt.unwrappable ?? false} ok=${attempt.ok} exit=${attempt.exitCode ?? 'none'} marker=${attempt.markerOk ?? false} timedOut=${attempt.timedOut ?? false} ms=${attempt.durationMs}`
       ])
   )
 }
@@ -36,9 +36,11 @@ export function registerPowerShellHostResolutionBreadcrumb(): void {
       hostName: win32.basename(resolution.host),
       selectedIndex: resolution.candidates.indexOf(resolution.host),
       fellBack: resolution.fellBack,
-      probedCount: resolution.attempts.filter((attempt) => !attempt.absent).length,
+      probedCount: resolution.attempts.filter((attempt) => !attempt.absent && !attempt.unwrappable)
+        .length,
       candidateCount: resolution.candidates.length,
       skippedCount: resolution.attempts.filter((attempt) => attempt.absent).length,
+      unwrappableCount: resolution.attempts.filter((attempt) => attempt.unwrappable).length,
       untriedCount: resolution.candidates.length - resolution.attempts.length,
       ...summarizeAttempts(resolution)
     })

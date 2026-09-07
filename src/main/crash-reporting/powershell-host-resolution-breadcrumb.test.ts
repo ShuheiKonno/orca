@@ -47,10 +47,45 @@ describe('PowerShell host diagnostics', () => {
       candidateCount: 3,
       probedCount: 1,
       skippedCount: 1,
+      unwrappableCount: 0,
       untriedCount: 1
     })
     expect(data.attempt0).toContain('absent=true')
-    expect(data.attempt1).toContain('#1 pwsh.exe absent=false ok=true exit=7 marker=true')
+    expect(data.attempt1).toContain(
+      '#1 pwsh.exe absent=false unwrappable=false ok=true exit=7 marker=true'
+    )
     expect(JSON.stringify(data)).not.toContain('private-name')
+  })
+
+  // Why its own outcome: "exists but the sign-in wrapper cannot launch it" and
+  // "never answered the probe" are opposite problems, and counting the first as
+  // a probe failure would send the reader hunting for a PowerShell that is fine.
+  it('separates a candidate the wrapper cannot launch from one that failed the probe', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    registerPowerShellHostResolutionBreadcrumb()
+    const observer = mocks.observer.mock.calls.at(-1)![0] as (
+      resolution: WindowsPowerShellHostResolution
+    ) => void
+    const unwrappable = 'C:\\Tools & Utils\\PowerShell\\7\\pwsh.exe'
+    const fallback = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    observer({
+      host: fallback,
+      candidates: [unwrappable, fallback],
+      fellBack: true,
+      attempts: [
+        { path: unwrappable, unwrappable: true, ok: false, durationMs: 0 },
+        { path: fallback, ok: false, exitCode: 0, markerOk: false, durationMs: 8120 }
+      ]
+    })
+    const data = sanitizeCrashReportDetails(mocks.record.mock.calls.at(-1)![1])
+    expect(data).toMatchObject({
+      fellBack: true,
+      candidateCount: 2,
+      probedCount: 1,
+      skippedCount: 0,
+      unwrappableCount: 1,
+      untriedCount: 0
+    })
+    expect(data.attempt0).toContain('unwrappable=true')
   })
 })

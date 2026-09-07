@@ -1,3 +1,4 @@
+import { waitForPromiseWithSignal } from '../../shared/abort-signal-reason'
 import { spawnProcess } from '../../shared/child-process/run-process'
 import { withCliRuntimeOnPath } from '../../shared/node-cli-command-resolution'
 import {
@@ -11,6 +12,7 @@ import { buildWindowsCommandInvocation } from './windows-command-invocation'
 import { terminateClaudeProcess } from './claude-login-process-termination'
 
 const MAX_COMMAND_OUTPUT_CHARS = 4_000
+const CLAUDE_SIGN_IN_CANCELLED = 'Claude sign-in was cancelled.'
 const CLAUDE_AUTH_DENIED_PATTERN =
   /\baccess_denied\b|authorization (?:request )?(?:was )?denied|sign-?in (?:was )?denied|login (?:was )?denied/i
 
@@ -46,7 +48,19 @@ export async function runClaudeCommandProcess(
     // Why here and not at spawn time: resolving the host runs PowerShell, and
     // the console builder is synchronous — probing there would block the main
     // process for as long as the slowest candidate takes to start.
-    await warmWindowsPowerShellHostCache()
+    //
+    // Why the signal: that is up to 20s per candidate with nothing spawned yet,
+    // so a cancel during it must end this wait rather than sit out the budget
+    // and then open a console anyway. The warm-up itself is left running — it is
+    // shared and cached, so cancelling it would discard work other callers await.
+    await waitForPromiseWithSignal(warmWindowsPowerShellHostCache(), options?.signal).catch(
+      // The warm-up always yields a host, so the only rejection is the abort,
+      // which the check below turns into this caller's own cancellation error.
+      () => {}
+    )
+    if (options?.signal?.aborted) {
+      throw new Error(CLAUDE_SIGN_IN_CANCELLED)
+    }
   }
   return new Promise((resolvePromise, rejectPromise) => {
     // Why lazy: the WSL branch runs `claude` inside the distro, so resolving a
@@ -145,7 +159,7 @@ export async function runClaudeCommandProcess(
       }
     }
     const onAbort = (): void => {
-      killChild(() => settle(() => rejectPromise(new Error('Claude sign-in was cancelled.'))))
+      killChild(() => settle(() => rejectPromise(new Error(CLAUDE_SIGN_IN_CANCELLED))))
     }
     const onError = (error: Error): void => {
       if (!terminationPending) {

@@ -3,6 +3,7 @@ import { readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
 import { runProcess } from './child-process/run-process'
+import { hasUnsafeWindowsBatchSyntax } from './windows-batch-spawn'
 
 /**
  * Resolves a PowerShell host that can actually run Orca's helper scripts.
@@ -38,6 +39,8 @@ export type WindowsPowerShellHostAttempt = WindowsPowerShellHostProbeResult & {
   path: string
   /** Ruled out by the cheap filesystem filter, so nothing was spawned. */
   absent?: boolean
+  /** Runs directly, but `start /wait` re-parses it through cmd.exe and would refuse it. */
+  unwrappable?: boolean
   durationMs: number
 }
 
@@ -233,6 +236,14 @@ async function runWarmup(
   for (const candidate of candidates) {
     if (!isPossibleWindowsPowerShellHost(candidate)) {
       attempts.push({ path: candidate, absent: true, ok: false, durationMs: 0 })
+      continue
+    }
+    // Why reject before probing: the probe spawns the host directly, so a path
+    // holding `&` or `%` passes it — but the interactive login goes through
+    // `wrapWindowsStartWait`, whose cmd.exe guard refuses that same path. Caching
+    // it would fail every sign-in on a machine whose System32 host worked.
+    if (hasUnsafeWindowsBatchSyntax(candidate)) {
+      attempts.push({ path: candidate, unwrappable: true, ok: false, durationMs: 0 })
       continue
     }
     const startedAt = Date.now()

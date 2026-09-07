@@ -123,7 +123,15 @@ describe('native Windows Claude login completion oracle', () => {
     const destroyStdout = vi.spyOn(child.stdout, 'destroy')
     const destroyStderr = vi.spyOn(child.stderr, 'destroy')
     const abortController = new AbortController()
+    const addAbortListener = vi.spyOn(abortController.signal, 'addEventListener')
     const removeAbortListener = vi.spyOn(abortController.signal, 'removeEventListener')
+    // Why balance rather than a fixed count: the native Windows login also
+    // subscribes while it waits for a PowerShell host, so the property that
+    // matters is that every subscription is torn down — not how many there are.
+    const expectNoLeakedAbortListener = (): void => {
+      expect(addAbortListener.mock.calls.length).toBeGreaterThan(0)
+      expect(removeAbortListener).toHaveBeenCalledTimes(addAbortListener.mock.calls.length)
+    }
     processMocks.spawn.mockReturnValue(child)
     const runner = await createRunner()
     let completions = 0
@@ -154,7 +162,7 @@ describe('native Windows Claude login completion oracle', () => {
       expect(destroyStdin).toHaveBeenCalledTimes(1)
       expect(destroyStdout).toHaveBeenCalledTimes(1)
       expect(destroyStderr).toHaveBeenCalledTimes(1)
-      expect(removeAbortListener).toHaveBeenCalledTimes(1)
+      expectNoLeakedAbortListener()
 
       child.emit('close', 0)
       await vi.advanceTimersByTimeAsync(1001)
@@ -164,7 +172,7 @@ describe('native Windows Claude login completion oracle', () => {
       expect(destroyStdin).toHaveBeenCalledTimes(1)
       expect(destroyStdout).toHaveBeenCalledTimes(1)
       expect(destroyStderr).toHaveBeenCalledTimes(1)
-      expect(removeAbortListener).toHaveBeenCalledTimes(1)
+      expectNoLeakedAbortListener()
     } finally {
       child.emit('close', 0)
       await command
