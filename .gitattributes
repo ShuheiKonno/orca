@@ -34,3 +34,9 @@
 # Generated runtime English subset: compared byte-for-byte by
 # verify:localization-runtime-catalog, so a CRLF checkout would fail the gate.
 /src/renderer/src/i18n/en-runtime-required.json linguist-generated=true text eol=lf
+# Generated skill bundle artifacts: verify:skill-bundle-manifest compares them
+# byte-for-byte against a fresh generation, so a CRLF checkout fails the gate.
+/resources/skills/*.json linguist-generated=true text eol=lf
+# Vitest writes snapshots with LF, so a CRLF checkout makes every local test run
+# report them as modified with an empty content diff.
+**/__snapshots__/*.snap text eol=lf
