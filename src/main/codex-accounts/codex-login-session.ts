@@ -1,6 +1,9 @@
+import { waitForPromiseWithSignal } from '../../shared/abort-signal-reason'
 import { join } from 'node:path'
 import type { WindowsHostInteractiveLoginSpawn } from '../../shared/windows-interactive-login-spawn'
 import { buildWindowsHostInteractiveLoginSpawn } from '../../shared/windows-interactive-login-spawn'
+import { warmWindowsPowerShellHostCache } from '../../shared/windows-powershell-host'
+import { recordLoginConsoleStartIfMissed } from '../crash-reporting/login-console-start-breadcrumb'
 import { withCliRuntimeOnPath } from '../../shared/node-cli-command-resolution'
 import { CODEX_LOGIN_CANCELLED_MESSAGE } from '../../shared/codex-auth-errors'
 import { parseWslUncPath } from '../../shared/wsl-paths'
@@ -62,6 +65,7 @@ type CodexLoginSessionDependencies = {
 }
 
 type LoginCancellation = {
+  signal: AbortSignal
   isCancelled: () => boolean
   setSpawnedCancel: (cancel: () => boolean) => void
 }
@@ -72,6 +76,7 @@ export async function runCodexLoginSession(
 ): Promise<void> {
   let cancelSpawnedLogin: (() => boolean) | null = null
   let cancelled = false
+  const cancellationController = new AbortController()
   dependencies.setCancel(() => {
     // Why: only an accepted cancel latches. A spawned login that refuses —
     // because it already authenticated — must stay cancellable, or the Cancel
@@ -82,9 +87,11 @@ export async function runCodexLoginSession(
     // A cancel before the spawn has no tree to kill; the pre-spawn probe reads
     // this flag instead of opening a browser nobody is waiting for.
     cancelled = true
+    cancellationController.abort(new Error(CODEX_LOGIN_CANCELLED_MESSAGE))
     return true
   })
   await runCodexLoginProcess(managedHomePath, dependencies, {
+    signal: cancellationController.signal,
     isCancelled: () => cancelled,
     setSpawnedCancel: (cancel) => {
       cancelSpawnedLogin = cancel
@@ -110,6 +117,12 @@ async function runCodexLoginProcess(
     ? null
     : readLoginAuthSnapshot(join(managedHomePath, 'auth.json'))
   const hasAuthBaseline = !wslInfo
+  if (cancellation.isCancelled()) {
+    throw new Error(CODEX_LOGIN_CANCELLED_MESSAGE)
+  }
+  if (!wslInfo && process.platform === 'win32') {
+    await waitForPromiseWithSignal(warmWindowsPowerShellHostCache(), cancellation.signal)
+  }
   if (cancellation.isCancelled()) {
     throw new Error(CODEX_LOGIN_CANCELLED_MESSAGE)
   }
@@ -263,6 +276,17 @@ async function runCodexLoginProcess(
           code === 0 ||
           (loginTreeKilledAfterAuth && readLoginAuthSnapshot(authJsonPath) !== null)
         ) {
+          if (
+            !loginTreeKilledAfterAuth &&
+            recordLoginConsoleStartIfMissed(spawnConfig.interactiveLogin, 'codex')
+          ) {
+            rejectPromise(
+              new Error(
+                'PowerShell could not start the Codex sign-in console. Check that PowerShell 7 is available and try again.'
+              )
+            )
+            return
+          }
           resolvePromise()
           return
         }
