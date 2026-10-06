@@ -103,11 +103,17 @@ describe('docs-only path classification', () => {
 describe('per-job path classification', () => {
   it('compiles Windows installers for NSIS-only changes', () => {
     expectClassification(['config/nsis/orca-installer-hooks.nsh'], { package_windows: true })
+    expectClassification(['config/nsis/orca-process-check.nsh'], { package_windows: true })
     const steps = prWorkflow.jobs.package_windows.steps
     const compileIndex = steps.findIndex((step) => step.name === 'Compile NSIS installer')
     expect(compileIndex).toBeGreaterThan(
       steps.findIndex((step) => step.name === 'Package unpacked app')
     )
+    for (const name of ['Smoke packaged Windows PTY native capability', 'Smoke packaged CLI']) {
+      const smokeIndex = steps.findIndex((step) => step.name === name)
+      expect(smokeIndex).toBeGreaterThan(-1)
+      expect(compileIndex).toBeGreaterThan(smokeIndex)
+    }
     expect(steps[compileIndex].run).toContain('--win nsis --prepackaged dist/win-unpacked')
     expect(steps[compileIndex].run).toContain('--publish never')
     expect(steps[compileIndex]['continue-on-error']).not.toBe(true)

@@ -30,7 +30,9 @@ function readPowerShellProbe(source = processCheck) {
 describe('NSIS process-check integration', () => {
   it('loads the capability hook through the installer and uninstaller include', () => {
     expect(hooks).toContain('!include "${__FILEDIR__}\\orca-process-check.nsh"')
-    expect(processCheck).toMatch(/!macro customCheckAppRunning\b/)
+    // A second hook would replace the path-scoped sweep with a kill by image name.
+    expect(hooks).not.toMatch(/^\s*!macro\s+customCheckAppRunning\b/m)
+    expect(processCheck.match(/^\s*!macro\s+customCheckAppRunning\b/gm)).toHaveLength(1)
     expect(processCheck).toContain('!include "getProcessInfo.nsh"')
     expect(processCheck).toMatch(/^Var pid$/m)
     expect(processCheck).toMatch(/^Var \/GLOBAL IsPowerShellAvailable$/m)
@@ -40,6 +42,7 @@ describe('NSIS process-check integration', () => {
     expect(processCheck).toContain('!insertmacro _CHECK_APP_RUNNING')
     expect(processCheck).not.toMatch(/!macro (?:FIND_PROCESS|KILL_PROCESS|_CHECK_APP_RUNNING)\b/)
     expect(processCheck).not.toMatch(/\b(?:Stop-Process|taskkill|Set-ExecutionPolicy)\b/)
+    expect(processCheck).not.toMatch(/\$\{nsProcess::(?:Find|Close|Kill)Process\}/)
     const findProcess = upstreamChecks.match(/!macro FIND_PROCESS\b[\s\S]*?!macroend/)?.[0]
     if (!findProcess) {
       throw new Error('The upstream process finder was not found')
